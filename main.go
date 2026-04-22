@@ -20,27 +20,32 @@ var levelOrder = map[string]int{
 }
 
 func main() {
-	device := selectDevice()
+	reader := bufio.NewReader(os.Stdin)
+
+	device := selectDevice(reader)
 	if device == "" {
 		fmt.Println("未检测到设备")
 		return
 	}
 
-	reader := bufio.NewReader(os.Stdin)
-
 	fmt.Print("\n请输入包名 (0=当前APP, 9=列出所有APP, 可留空): ")
-	pkg, _ := reader.ReadString('\n')
+	pkg, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("\n输入错误:", err)
+		pkg = ""
+	}
 	pkg = strings.TrimSpace(pkg)
 
-	// 新增功能：输入9列出所有包名
 	if pkg == "9" {
 		listPackages(device)
 		fmt.Print("\n请输入需要抓日志的包名 (可留空): ")
-		pkg, _ = reader.ReadString('\n')
+		pkg, err = reader.ReadString('\n')
+		if err != nil {
+			pkg = ""
+		}
 		pkg = strings.TrimSpace(pkg)
 	}
 
-	// 新增功能：输入0获取当前APP包名
 	if pkg == "0" {
 		pkg = getCurrentPackage(device)
 		if pkg != "" {
@@ -71,9 +76,13 @@ func chooseLevel(reader *bufio.Reader) string {
 	fmt.Println("3. W - 警告")
 	fmt.Println("4. I - 信息")
 	fmt.Println("5. D - 调试")
+	fmt.Println("6. V - 全部")
 	fmt.Print("选择 (默认2): ")
 
-	input, _ := reader.ReadString('\n')
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "E"
+	}
 	input = strings.TrimSpace(input)
 
 	switch input {
@@ -85,12 +94,14 @@ func chooseLevel(reader *bufio.Reader) string {
 		return "I"
 	case "5":
 		return "D"
+	case "6":
+		return "V"
 	default:
 		return "E"
 	}
 }
 
-func selectDevice() string {
+func selectDevice(reader *bufio.Reader) string {
 	cmd := exec.Command(adbPath, "devices")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -128,10 +139,12 @@ func selectDevice() string {
 	}
 	fmt.Print("请选择设备: ")
 
-	reader := bufio.NewReader(os.Stdin)
-	text, _ := reader.ReadString('\n')
+	text, err := reader.ReadString('\n')
+	if err != nil {
+		return devices[0]
+	}
 	var choice int
-	fmt.Sscanf(text, "%d", &choice)
+	_, _ = fmt.Sscanf(text, "%d", &choice)
 
 	if choice < 1 || choice > len(devices) {
 		return devices[0]
@@ -140,7 +153,11 @@ func selectDevice() string {
 }
 
 func startLogcat(device, pkg, minLevel string) {
+	clearCmd := exec.Command(adbPath, "-s", device, "logcat", "-c")
+	_ = clearCmd.Run()
+
 	cmd := exec.Command(adbPath, "-s", device, "logcat")
+	cmd.Stderr = cmd.Stdout
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		fmt.Println("logcat启动失败:", err)
@@ -154,10 +171,17 @@ func startLogcat(device, pkg, minLevel string) {
 	}
 
 	scanner := bufio.NewScanner(stdout)
+	buf := make([]byte, 1024*1024)
+	scanner.Buffer(buf, bufio.MaxScanTokenSize)
 	for scanner.Scan() {
 		line := scanner.Text()
 		processLine(line, pkg, minLevel)
 	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Println("日志读取错误:", err)
+	}
+	_ = cmd.Wait()
 }
 
 func processLine(line, pkg, minLevel string) {
@@ -178,22 +202,26 @@ func processLine(line, pkg, minLevel string) {
 }
 
 func extractLevel(line string) string {
-	if strings.Contains(line, " V ") {
-		return "V"
+	prefix := line
+	if len(line) > 50 {
+		prefix = line[:50]
 	}
-	if strings.Contains(line, " D ") {
-		return "D"
-	}
-	if strings.Contains(line, " I ") {
+	if strings.Contains(prefix, " I/") || strings.Contains(prefix, " I ") {
 		return "I"
 	}
-	if strings.Contains(line, " W ") {
+	if strings.Contains(prefix, " D/") || strings.Contains(prefix, " D ") {
+		return "D"
+	}
+	if strings.Contains(prefix, " W/") || strings.Contains(prefix, " W ") {
 		return "W"
 	}
-	if strings.Contains(line, " E ") {
+	if strings.Contains(prefix, " E/") || strings.Contains(prefix, " E ") {
 		return "E"
 	}
-	if strings.Contains(line, " F ") {
+	if strings.Contains(prefix, " V/") || strings.Contains(prefix, " V ") {
+		return "V"
+	}
+	if strings.Contains(prefix, " F/") || strings.Contains(prefix, " F ") {
 		return "F"
 	}
 	return ""

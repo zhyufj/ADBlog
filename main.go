@@ -88,6 +88,8 @@ func chooseLevel(reader *bufio.Reader) string {
 	switch input {
 	case "1":
 		return "F"
+	case "2":
+		return "E"
 	case "3":
 		return "W"
 	case "4":
@@ -147,6 +149,7 @@ func selectDevice(reader *bufio.Reader) string {
 	_, _ = fmt.Sscanf(text, "%d", &choice)
 
 	if choice < 1 || choice > len(devices) {
+		fmt.Println("无效选择，默认使用第一个设备:", devices[0])
 		return devices[0]
 	}
 	return devices[choice-1]
@@ -201,28 +204,30 @@ func processLine(line, pkg, minLevel string) {
 	printColored(line, level)
 }
 
+// extractLevel 从日志行中提取级别标记。
+// 匹配规则：在行首50字符内，找到第一个符合「前为空格/行首 + [VDIWEF] + /或空格」的位置，
+// 取第一个匹配（而非优先级最高的），避免消息体中的级别文本导致误判。
 func extractLevel(line string) string {
-	prefix := line
+	checkRange := line
 	if len(line) > 50 {
-		prefix = line[:50]
+		checkRange = line[:50]
 	}
-	if strings.Contains(prefix, " I/") || strings.Contains(prefix, " I ") {
-		return "I"
-	}
-	if strings.Contains(prefix, " D/") || strings.Contains(prefix, " D ") {
-		return "D"
-	}
-	if strings.Contains(prefix, " W/") || strings.Contains(prefix, " W ") {
-		return "W"
-	}
-	if strings.Contains(prefix, " E/") || strings.Contains(prefix, " E ") {
-		return "E"
-	}
-	if strings.Contains(prefix, " V/") || strings.Contains(prefix, " V ") {
-		return "V"
-	}
-	if strings.Contains(prefix, " F/") || strings.Contains(prefix, " F ") {
-		return "F"
+
+	for i, ch := range checkRange {
+		if ch != 'V' && ch != 'D' && ch != 'I' && ch != 'W' && ch != 'E' && ch != 'F' {
+			continue
+		}
+		// 前导字符必须是空格或行首
+		if i > 0 && checkRange[i-1] != ' ' {
+			continue
+		}
+		// 后继字符必须是 / 或空格
+		if i+1 < len(checkRange) {
+			next := checkRange[i+1]
+			if next == '/' || next == ' ' {
+				return string(ch)
+			}
+		}
 	}
 	return ""
 }
@@ -268,7 +273,7 @@ func getCurrentPackage(device string) string {
 
 // 新增函数：列出设备上所有应用的包名
 func listPackages(device string) {
-	fmt.Println("\n正在获取所有APP包名...\n")
+	fmt.Print("\n正在获取所有APP包名...\n")
 	cmd := exec.Command(adbPath, "-s", device, "shell", "pm", "list", "packages")
 	out, err := cmd.Output()
 	if err != nil {

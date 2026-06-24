@@ -1,3 +1,3 @@
-module awesomeProject
+module ADBlog
 
 go 1.25
